@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rep Tracker - Personal Trainer App</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Rep Tracker</h1>
+        </header>
+        
+        <main>
+            <div class="video-container">
+                <video id="videoElement" autoplay muted playsinline></video>
+                <canvas id="poseCanvas"></canvas>
+            </div>
+            
+            <div class="controls">
+                <div class="exercise-selection">
+                    <label for="exerciseSelect">Select Exercise:</label>
+                    <select id="exerciseSelect">
+                        <option value="pushup">Push-ups</option>
+                        <option value="squat">Squats</option>
+                    </select>
+                </div>
+                
+                <div class="rep-counter">
+                    <h2>Reps: <span id="repCount">0</span></h2>
+                </div>
+                
+                <div class="action-buttons">
+                    <button id="startBtn">Start Workout</button>
+                    <button id="stopBtn" disabled>Stop Workout</button>
+                    <button id="resetBtn">Reset</button>
+                </div>
+            </div>
+            
+            <div class="status">
+                <p id="statusMessage">Select an exercise and click Start to begin</p>
+            </div>
+            
+            <div class="debug-info">
+                <h3>Debug Info</h3>
+                <p id="debugInfo">Debug data will appear here...</p>
+            </div>
+        </main>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
