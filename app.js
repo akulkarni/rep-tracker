@@ -601,30 +601,73 @@ class StrongWorkoutTracker {
         const rightShoulder = landmarks[12];
         const leftWrist = landmarks[15];
         const rightWrist = landmarks[16];
+        const leftElbow = landmarks[13];
+        const rightElbow = landmarks[14];
         
-        if (!leftShoulder || !rightShoulder || !leftWrist || !rightWrist ||
+        if (!leftShoulder || !rightShoulder || !leftElbow || !rightElbow ||
             leftShoulder.visibility < 0.5 || rightShoulder.visibility < 0.5 ||
-            leftWrist.visibility < 0.5 || rightWrist.visibility < 0.5) {
+            leftElbow.visibility < 0.5 || rightElbow.visibility < 0.5) {
             this.updateDebug('Missing landmarks for push-up detection');
             return;
         }
         
-        const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
-        const wristY = (leftWrist.y + rightWrist.y) / 2;
-        const diff = wristY - shoulderY;
+        // Calculate arm angle (more reliable for pushups)
+        let leftAngle = 180, rightAngle = 180;
         
-        this.updateDebug(`Push-up: diff=${diff.toFixed(3)}, state=${this.exerciseState}, reps=${this.currentRepCount}`);
+        if (leftWrist && leftWrist.visibility > 0.5) {
+            leftAngle = this.calculateAngle(leftShoulder, leftElbow, leftWrist);
+        }
+        if (rightWrist && rightWrist.visibility > 0.5) {
+            rightAngle = this.calculateAngle(rightShoulder, rightElbow, rightWrist);
+        }
+        
+        const avgAngle = (leftAngle + rightAngle) / 2;
+        
+        // Fallback to position-based detection
+        const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+        const elbowY = (leftElbow.y + rightElbow.y) / 2;
+        const positionDiff = elbowY - shoulderY;
+        
+        this.updateDebug(`Push-up: angle=${avgAngle.toFixed(1)}°, posDiff=${positionDiff.toFixed(3)}, state=${this.exerciseState}, reps=${this.currentRepCount}`);
         
         const now = Date.now();
-        if (this.exerciseState === 'up' && diff > 0.02 && (now - this.lastStateChange) > 500) {
-            this.exerciseState = 'down';
-            this.lastStateChange = now;
-        } else if (this.exerciseState === 'down' && diff < -0.005 && (now - this.lastStateChange) > 500) {
-            this.exerciseState = 'up';
-            this.lastStateChange = now;
-            this.currentRepCount++;
-            this.updateCurrentRepDisplay();
+        
+        // Use angle-based detection (more reliable)
+        if (avgAngle < 180) { // Valid angle measurement available
+            if (this.exerciseState === 'up' && avgAngle < 110 && (now - this.lastStateChange) > 400) {
+                this.exerciseState = 'down';
+                this.lastStateChange = now;
+                console.log('Push-up: Going DOWN (angle method), angle:', avgAngle);
+            } else if (this.exerciseState === 'down' && avgAngle > 140 && (now - this.lastStateChange) > 400) {
+                this.exerciseState = 'up';
+                this.lastStateChange = now;
+                this.currentRepCount++;
+                this.updateCurrentRepDisplay();
+                console.log('Push-up: Going UP (angle method), rep counted:', this.currentRepCount);
+            }
+        } else {
+            // Fallback to position-based detection with more sensitive thresholds
+            if (this.exerciseState === 'up' && positionDiff > 0.03 && (now - this.lastStateChange) > 400) {
+                this.exerciseState = 'down';
+                this.lastStateChange = now;
+                console.log('Push-up: Going DOWN (position method), diff:', positionDiff);
+            } else if (this.exerciseState === 'down' && positionDiff < 0.01 && (now - this.lastStateChange) > 400) {
+                this.exerciseState = 'up';
+                this.lastStateChange = now;
+                this.currentRepCount++;
+                this.updateCurrentRepDisplay();
+                console.log('Push-up: Going UP (position method), rep counted:', this.currentRepCount);
+            }
         }
+    }
+    
+    calculateAngle(a, b, c) {
+        const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+        let angle = Math.abs(radians * 180.0 / Math.PI);
+        if (angle > 180.0) {
+            angle = 360 - angle;
+        }
+        return angle;
     }
     
     analyzeSquat(landmarks) {
