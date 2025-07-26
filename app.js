@@ -1,73 +1,440 @@
-class RepTracker {
+class StrongWorkoutTracker {
     constructor() {
         this.video = document.getElementById('videoElement');
         this.canvas = document.getElementById('poseCanvas');
         this.ctx = this.canvas.getContext('2d');
-        this.repCount = 0;
-        this.isTracking = false;
-        this.currentExercise = 'pushup';
         this.pose = null;
-        this.lastPosition = null;
-        this.exerciseState = 'up'; // 'up' or 'down'
+        
+        // Workout State
+        this.workoutState = 'setup'; // 'setup', 'active', 'rest', 'summary'
+        this.selectedExercises = [];
+        this.currentExerciseIndex = 0;
+        this.currentSetNumber = 1;
+        this.currentRepCount = 0;
+        this.completedSets = [];
+        this.workoutStartTime = null;
+        this.setStartTime = null;
+        this.restStartTime = null;
+        this.restDuration = 90; // seconds
+        
+        // Exercise Detection State
+        this.isTracking = false;
+        this.exerciseState = 'up';
         this.lastStateChange = 0;
+        this.isVideoVisible = true;
+        
+        // Exercise Definitions
+        this.exercises = {
+            pushup: { name: 'Push-ups', icon: '💪', muscles: 'Chest, shoulders, triceps' },
+            squat: { name: 'Squats', icon: '🦵', muscles: 'Legs, glutes, core' },
+            situp: { name: 'Sit-ups', icon: '🔥', muscles: 'Core, abs' }
+        };
         
         this.initializeElements();
         this.setupEventListeners();
+        this.showExerciseSelection();
     }
     
     initializeElements() {
-        this.repCountElement = document.getElementById('repCount');
-        this.exerciseSelect = document.getElementById('exerciseSelect');
-        this.startBtn = document.getElementById('startBtn');
-        this.stopBtn = document.getElementById('stopBtn');
-        this.resetBtn = document.getElementById('resetBtn');
+        // Screen elements
+        this.exerciseSelectionScreen = document.getElementById('exerciseSelection');
+        this.workoutSessionScreen = document.getElementById('workoutSession');
+        this.workoutSummaryScreen = document.getElementById('workoutSummary');
+        
+        // Exercise selection
+        this.exerciseCards = document.querySelectorAll('.exercise-card');
+        this.startWorkoutBtn = document.getElementById('startWorkoutBtn');
+        
+        // Workout session
+        this.currentExerciseName = document.getElementById('currentExerciseName');
+        this.currentSetNumber = document.getElementById('currentSetNumber');
+        this.currentRepCountDisplay = document.getElementById('currentRepCount');
+        this.setsDisplay = document.getElementById('setsDisplay');
+        this.nextExercisesList = document.getElementById('nextExercises');
+        
+        // Set controls
+        this.startSetBtn = document.getElementById('startSetBtn');
+        this.finishSetBtn = document.getElementById('finishSetBtn');
+        this.finishExerciseBtn = document.getElementById('finishExerciseBtn');
+        this.manualRepBtn = document.getElementById('manualRepBtn');
+        
+        // Timer and status
+        this.workoutTimer = document.getElementById('workoutTimer');
         this.statusMessage = document.getElementById('statusMessage');
+        this.restTimer = document.getElementById('restTimer');
+        this.restTimeDisplay = document.getElementById('restTimeDisplay');
+        
+        // Video controls
+        this.videoSection = document.getElementById('videoSection');
+        this.toggleVideoBtn = document.getElementById('toggleVideoBtn');
+        
+        // Debug
+        this.debugPanel = document.getElementById('debugPanel');
+        this.debugToggleBtn = document.getElementById('toggleDebugBtn');
         this.debugInfo = document.getElementById('debugInfo');
+        this.debugContent = document.querySelector('.debug-content');
+        
+        // Summary
+        this.totalDurationDisplay = document.getElementById('totalDuration');
+        this.totalSetsDisplay = document.getElementById('totalSets');
+        this.totalRepsDisplay = document.getElementById('totalReps');
+        this.exerciseSummaryDisplay = document.getElementById('exerciseSummary');
+        this.finishWorkoutBtn = document.getElementById('finishWorkoutBtn');
     }
     
     setupEventListeners() {
-        this.startBtn.addEventListener('click', () => this.startWorkout());
-        this.stopBtn.addEventListener('click', () => this.stopWorkout());
-        this.resetBtn.addEventListener('click', () => this.resetCounter());
-        this.exerciseSelect.addEventListener('change', (e) => {
-            this.currentExercise = e.target.value;
-            this.resetCounter();
+        // Exercise selection
+        this.exerciseCards.forEach(card => {
+            card.addEventListener('click', () => this.toggleExerciseSelection(card));
         });
+        this.startWorkoutBtn.addEventListener('click', () => this.startWorkout());
+        
+        // Set controls
+        this.startSetBtn.addEventListener('click', () => this.startSet());
+        this.finishSetBtn.addEventListener('click', () => this.finishSet());
+        this.finishExerciseBtn.addEventListener('click', () => this.finishExercise());
+        this.manualRepBtn.addEventListener('click', () => this.addManualRep());
+        
+        // Video controls
+        this.toggleVideoBtn.addEventListener('click', () => this.toggleVideo());
+        
+        // Rest timer
+        document.getElementById('skipRestBtn').addEventListener('click', () => this.skipRest());
+        document.getElementById('addTimeBtn').addEventListener('click', () => this.addRestTime());
+        
+        // Debug
+        this.debugToggleBtn.addEventListener('click', () => this.toggleDebug());
+        
+        // Summary
+        this.finishWorkoutBtn.addEventListener('click', () => this.resetToStart());
+        
+        // Back button
+        document.getElementById('backBtn').addEventListener('click', () => this.goBack());
     }
     
-    async startWorkout() {
-        try {
-            await this.initializeCamera();
-            await this.initializePoseDetection();
-            this.isTracking = true;
-            this.startBtn.disabled = true;
-            this.stopBtn.disabled = false;
-            this.updateStatus('Workout started! Get in position...');
-        } catch (error) {
-            console.error('Error starting workout:', error);
-            this.updateStatus('Error accessing camera. Please check permissions.');
+    // Exercise Selection Methods
+    showExerciseSelection() {
+        this.workoutState = 'setup';
+        this.exerciseSelectionScreen.classList.remove('hidden');
+        this.workoutSessionScreen.classList.add('hidden');
+        this.workoutSummaryScreen.classList.add('hidden');
+        this.videoSection.classList.add('hidden');
+        this.updateStatus('Select exercises to start your workout');
+    }
+    
+    toggleExerciseSelection(card) {
+        const exerciseType = card.dataset.exercise;
+        card.classList.toggle('selected');
+        
+        if (this.selectedExercises.includes(exerciseType)) {
+            this.selectedExercises = this.selectedExercises.filter(ex => ex !== exerciseType);
+        } else {
+            this.selectedExercises.push(exerciseType);
+        }
+        
+        this.startWorkoutBtn.disabled = this.selectedExercises.length === 0;
+        
+        if (this.selectedExercises.length > 0) {
+            this.updateStatus(`${this.selectedExercises.length} exercise${this.selectedExercises.length > 1 ? 's' : ''} selected`);
+        } else {
+            this.updateStatus('Select exercises to start your workout');
         }
     }
     
-    stopWorkout() {
+    // Workout Flow Methods
+    async startWorkout() {
+        if (this.selectedExercises.length === 0) return;
+        
+        this.workoutState = 'active';
+        this.workoutStartTime = Date.now();
+        this.currentExerciseIndex = 0;
+        this.currentSetNumber = 1;
+        this.completedSets = [];
+        
+        // Show workout session screen
+        this.exerciseSelectionScreen.classList.add('hidden');
+        this.workoutSessionScreen.classList.remove('hidden');
+        this.videoSection.classList.remove('hidden');
+        
+        // Initialize camera and pose detection
+        try {
+            await this.initializeCamera();
+            await this.initializePoseDetection();
+        } catch (error) {
+            console.error('Error initializing camera:', error);
+            this.updateStatus('Camera initialization failed. You can still use manual counting.');
+        }
+        
+        this.updateWorkoutDisplay();
+        this.startWorkoutTimer();
+        this.updateStatus('Workout started! Select an exercise to begin your first set.');
+    }
+    
+    startSet() {
+        this.currentRepCount = 0;
+        this.exerciseState = 'up';
+        this.lastStateChange = 0;
+        this.setStartTime = Date.now();
+        this.isTracking = true;
+        
+        this.startSetBtn.classList.add('hidden');
+        this.finishSetBtn.classList.remove('hidden');
+        
+        this.updateCurrentRepDisplay();
+        this.updateStatus(`Set ${this.currentSetNumber} started! Begin your ${this.getCurrentExercise().name.toLowerCase()}.`);
+    }
+    
+    finishSet() {
         this.isTracking = false;
-        this.startBtn.disabled = false;
-        this.stopBtn.disabled = true;
-        this.updateStatus('Workout stopped');
+        const setDuration = Date.now() - this.setStartTime;
+        
+        // Record the completed set
+        const setData = {
+            exercise: this.selectedExercises[this.currentExerciseIndex],
+            setNumber: this.currentSetNumber,
+            reps: this.currentRepCount,
+            duration: setDuration,
+            isAuto: this.currentRepCount > 0 // Assume auto if reps were counted
+        };
+        
+        this.completedSets.push(setData);
+        this.addSetToDisplay(setData);
+        
+        this.startSetBtn.classList.remove('hidden');
+        this.finishSetBtn.classList.add('hidden');
+        
+        this.currentSetNumber++;
+        this.updateWorkoutDisplay();
+        
+        // Start rest timer
+        this.startRestTimer();
+        
+        this.updateStatus(`Set complete! ${this.currentRepCount} reps recorded. Take a rest.`);
+    }
+    
+    finishExercise() {
+        this.isTracking = false;
+        this.currentExerciseIndex++;
+        this.currentSetNumber = 1;
+        
+        if (this.currentExerciseIndex >= this.selectedExercises.length) {
+            this.finishWorkout();
+        } else {
+            this.updateWorkoutDisplay();
+            this.updateStatus(`${this.getCurrentExercise().name} complete! Moving to next exercise.`);
+        }
+    }
+    
+    finishWorkout() {
+        this.workoutState = 'summary';
+        this.isTracking = false;
         
         if (this.video.srcObject) {
             this.video.srcObject.getTracks().forEach(track => track.stop());
         }
+        
+        this.workoutSessionScreen.classList.add('hidden');
+        this.workoutSummaryScreen.classList.remove('hidden');
+        this.videoSection.classList.add('hidden');
+        
+        this.displayWorkoutSummary();
     }
     
-    resetCounter() {
-        this.repCount = 0;
-        this.updateRepCount();
-        this.exerciseState = 'up';
-        this.lastStateChange = 0;
-        this.updateStatus('Counter reset. Ready to start!');
+    // Set Management Methods
+    addSetToDisplay(setData) {
+        const setRow = document.createElement('div');
+        setRow.className = 'set-row';
+        setRow.innerHTML = `
+            <span class="set-number">Set ${setData.setNumber}</span>
+            <span class="set-reps">${setData.reps}</span>
+            <span class="set-type">${setData.isAuto ? 'Auto' : 'Manual'}</span>
+        `;
+        this.setsDisplay.appendChild(setRow);
     }
     
+    addManualRep() {
+        if (this.isTracking) {
+            this.currentRepCount++;
+            this.updateCurrentRepDisplay();
+            this.updateStatus(`Manual rep added. Total: ${this.currentRepCount}`);
+        }
+    }
+    
+    // Timer Methods
+    startWorkoutTimer() {
+        this.workoutTimerInterval = setInterval(() => {
+            if (this.workoutStartTime) {
+                const elapsed = Date.now() - this.workoutStartTime;
+                this.workoutTimer.textContent = this.formatTime(elapsed);
+            }
+        }, 1000);
+    }
+    
+    startRestTimer() {
+        this.restStartTime = Date.now();
+        this.restTimer.classList.remove('hidden');
+        
+        this.restTimerInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - this.restStartTime) / 1000);
+            const remaining = Math.max(0, this.restDuration - elapsed);
+            
+            this.restTimeDisplay.textContent = this.formatTimeSeconds(remaining);
+            
+            if (remaining === 0) {
+                this.skipRest();
+            }
+        }, 1000);
+    }
+    
+    skipRest() {
+        this.restTimer.classList.add('hidden');
+        if (this.restTimerInterval) {
+            clearInterval(this.restTimerInterval);
+        }
+        this.updateStatus('Rest complete! Ready for next set.');
+    }
+    
+    addRestTime() {
+        this.restDuration += 30;
+    }
+    
+    formatTime(milliseconds) {
+        const seconds = Math.floor(milliseconds / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+    }
+    
+    formatTimeSeconds(seconds) {
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+    }
+    
+    // Display Update Methods
+    updateWorkoutDisplay() {
+        const currentExercise = this.getCurrentExercise();
+        this.currentExerciseName.textContent = currentExercise.name;
+        this.currentSetNumber.textContent = this.currentSetNumber;
+        this.updateCurrentRepDisplay();
+        this.updateNextExercises();
+    }
+    
+    updateCurrentRepDisplay() {
+        this.currentRepCountDisplay.textContent = this.currentRepCount;
+    }
+    
+    updateNextExercises() {
+        this.nextExercisesList.innerHTML = '';
+        
+        for (let i = this.currentExerciseIndex + 1; i < this.selectedExercises.length; i++) {
+            const exercise = this.exercises[this.selectedExercises[i]];
+            const item = document.createElement('div');
+            item.className = 'next-exercise-item';
+            item.innerHTML = `
+                <span class="next-exercise-icon">${exercise.icon}</span>
+                <span class="next-exercise-name">${exercise.name}</span>
+            `;
+            this.nextExercisesList.appendChild(item);
+        }
+    }
+    
+    displayWorkoutSummary() {
+        const totalDuration = Date.now() - this.workoutStartTime;
+        const totalSets = this.completedSets.length;
+        const totalReps = this.completedSets.reduce((sum, set) => sum + set.reps, 0);
+        
+        this.totalDurationDisplay.textContent = this.formatTime(totalDuration);
+        this.totalSetsDisplay.textContent = totalSets;
+        this.totalRepsDisplay.textContent = totalReps;
+        
+        // Group sets by exercise
+        const exerciseGroups = {};
+        this.completedSets.forEach(set => {
+            if (!exerciseGroups[set.exercise]) {
+                exerciseGroups[set.exercise] = { sets: 0, reps: 0 };
+            }
+            exerciseGroups[set.exercise].sets++;
+            exerciseGroups[set.exercise].reps += set.reps;
+        });
+        
+        this.exerciseSummaryDisplay.innerHTML = '';
+        Object.entries(exerciseGroups).forEach(([exerciseType, stats]) => {
+            const exercise = this.exercises[exerciseType];
+            const item = document.createElement('div');
+            item.className = 'exercise-summary-item';
+            item.innerHTML = `
+                <span class="exercise-summary-name">${exercise.name}</span>
+                <span class="exercise-summary-stats">${stats.sets} sets, ${stats.reps} reps</span>
+            `;
+            this.exerciseSummaryDisplay.appendChild(item);
+        });
+    }
+    
+    // Utility Methods
+    getCurrentExercise() {
+        const exerciseType = this.selectedExercises[this.currentExerciseIndex];
+        return this.exercises[exerciseType];
+    }
+    
+    updateStatus(message) {
+        this.statusMessage.textContent = message;
+    }
+    
+    toggleVideo() {
+        this.isVideoVisible = !this.isVideoVisible;
+        this.videoSection.style.display = this.isVideoVisible ? 'block' : 'none';
+        this.toggleVideoBtn.textContent = this.isVideoVisible ? 'Hide Camera' : 'Show Camera';
+    }
+    
+    toggleDebug() {
+        this.debugContent.classList.toggle('hidden');
+    }
+    
+    updateDebug(message) {
+        if (this.debugInfo) {
+            this.debugInfo.textContent = message;
+        }
+    }
+    
+    goBack() {
+        if (this.workoutState === 'active') {
+            if (confirm('Are you sure you want to end this workout?')) {
+                this.resetToStart();
+            }
+        } else {
+            this.resetToStart();
+        }
+    }
+    
+    resetToStart() {
+        // Clear intervals
+        if (this.workoutTimerInterval) clearInterval(this.workoutTimerInterval);
+        if (this.restTimerInterval) clearInterval(this.restTimerInterval);
+        
+        // Stop camera
+        if (this.video.srcObject) {
+            this.video.srcObject.getTracks().forEach(track => track.stop());
+        }
+        
+        // Reset state
+        this.workoutState = 'setup';
+        this.selectedExercises = [];
+        this.currentExerciseIndex = 0;
+        this.currentSetNumber = 1;
+        this.currentRepCount = 0;
+        this.completedSets = [];
+        this.isTracking = false;
+        
+        // Clear selections
+        this.exerciseCards.forEach(card => card.classList.remove('selected'));
+        this.setsDisplay.innerHTML = '';
+        
+        // Show exercise selection
+        this.showExerciseSelection();
+    }
+    
+    // Camera and Pose Detection Methods (from original code)
     async initializeCamera() {
         const constraints = {
             video: {
@@ -125,7 +492,7 @@ class RepTracker {
     onPoseResults(results) {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        if (results.poseLandmarks) {
+        if (results.poseLandmarks && this.isTracking) {
             this.drawPose(results.poseLandmarks);
             this.analyzeExercise(results.poseLandmarks);
         }
@@ -172,12 +539,17 @@ class RepTracker {
     }
     
     analyzeExercise(landmarks) {
-        switch (this.currentExercise) {
+        const currentExerciseType = this.selectedExercises[this.currentExerciseIndex];
+        
+        switch (currentExerciseType) {
             case 'pushup':
                 this.analyzePushup(landmarks);
                 break;
             case 'squat':
                 this.analyzeSquat(landmarks);
+                break;
+            case 'situp':
+                this.analyzeSitup(landmarks);
                 break;
         }
     }
@@ -197,22 +569,17 @@ class RepTracker {
         const wristY = (leftWrist.y + rightWrist.y) / 2;
         const diff = wristY - shoulderY;
         
-        this.updateDebug(`Push-up: diff=${diff.toFixed(3)}, state=${this.exerciseState}, shoulderY=${shoulderY.toFixed(3)}, wristY=${wristY.toFixed(3)}`);
+        this.updateDebug(`Push-up: diff=${diff.toFixed(3)}, state=${this.exerciseState}, reps=${this.currentRepCount}`);
         
-        // State machine logic with timing check to prevent rapid changes
         const now = Date.now();
         if (this.exerciseState === 'up' && diff > 0.02 && (now - this.lastStateChange) > 500) {
             this.exerciseState = 'down';
             this.lastStateChange = now;
-            this.updateStatus('Going down...');
-            console.log('Push-up: Changed to DOWN state');
         } else if (this.exerciseState === 'down' && diff < -0.005 && (now - this.lastStateChange) > 500) {
             this.exerciseState = 'up';
             this.lastStateChange = now;
-            this.repCount++;
-            this.updateRepCount();
-            this.updateStatus(`Push-up completed! Rep ${this.repCount}`);
-            console.log('Push-up: Changed to UP state, rep counted');
+            this.currentRepCount++;
+            this.updateCurrentRepDisplay();
         }
     }
     
@@ -231,51 +598,51 @@ class RepTracker {
         const kneeY = (leftKnee.y + rightKnee.y) / 2;
         const diff = kneeY - hipY;
         
-        this.updateDebug(`Squat: diff=${diff.toFixed(3)}, state=${this.exerciseState}, hipY=${hipY.toFixed(3)}, kneeY=${kneeY.toFixed(3)}`);
+        this.updateDebug(`Squat: diff=${diff.toFixed(3)}, state=${this.exerciseState}, reps=${this.currentRepCount}`);
         
-        // State machine: up -> down -> up = 1 rep with timing check
         const now = Date.now();
         if (this.exerciseState === 'up' && diff < 0.03 && (now - this.lastStateChange) > 500) {
             this.exerciseState = 'down';
             this.lastStateChange = now;
-            this.updateStatus('Going down...');
-            console.log('Squat: Changed to DOWN state');
         } else if (this.exerciseState === 'down' && diff > 0.06 && (now - this.lastStateChange) > 500) {
             this.exerciseState = 'up';
             this.lastStateChange = now;
-            this.repCount++;
-            this.updateRepCount();
-            this.updateStatus(`Squat completed! Rep ${this.repCount}`);
-            console.log('Squat: Changed to UP state, rep counted');
+            this.currentRepCount++;
+            this.updateCurrentRepDisplay();
         }
     }
     
-    
-    calculateAngle(a, b, c) {
-        const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-        let angle = Math.abs(radians * 180.0 / Math.PI);
-        if (angle > 180.0) {
-            angle = 360 - angle;
+    analyzeSitup(landmarks) {
+        const leftShoulder = landmarks[11];
+        const rightShoulder = landmarks[12];
+        const leftHip = landmarks[23];
+        const rightHip = landmarks[24];
+        
+        if (!leftShoulder || !rightShoulder || !leftHip || !rightHip) {
+            this.updateDebug('Missing landmarks for sit-up detection');
+            return;
         }
-        return angle;
-    }
-    
-    updateRepCount() {
-        this.repCountElement.textContent = this.repCount;
-    }
-    
-    updateStatus(message) {
-        this.statusMessage.textContent = message;
-    }
-    
-    updateDebug(message) {
-        if (this.debugInfo) {
-            this.debugInfo.textContent = message;
+        
+        const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+        const hipY = (leftHip.y + rightHip.y) / 2;
+        const diff = shoulderY - hipY;
+        
+        this.updateDebug(`Sit-up: diff=${diff.toFixed(3)}, state=${this.exerciseState}, reps=${this.currentRepCount}`);
+        
+        const now = Date.now();
+        if (this.exerciseState === 'down' && diff < -0.1 && (now - this.lastStateChange) > 500) {
+            this.exerciseState = 'up';
+            this.lastStateChange = now;
+        } else if (this.exerciseState === 'up' && diff > -0.05 && (now - this.lastStateChange) > 500) {
+            this.exerciseState = 'down';
+            this.lastStateChange = now;
+            this.currentRepCount++;
+            this.updateCurrentRepDisplay();
         }
     }
 }
 
 // Initialize the app when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-    new RepTracker();
+    new StrongWorkoutTracker();
 });
