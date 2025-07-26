@@ -79,6 +79,7 @@ class StrongWorkoutTracker {
         this.exerciseTitle = document.getElementById('exerciseTitle');
         this.statusDot = document.getElementById('statusDot');
         this.statusText = document.getElementById('statusText');
+        this.angleLabel = document.getElementById('angleLabel');
         this.armAngleDisplay = document.getElementById('armAngle');
         this.positionValueDisplay = document.getElementById('positionValue');
         this.exerciseStateDisplay = document.getElementById('exerciseStateDisplay');
@@ -333,6 +334,24 @@ class StrongWorkoutTracker {
         if (this.exerciseTitle) {
             this.exerciseTitle.textContent = currentExercise.name;
         }
+        
+        // Update angle label based on exercise
+        if (this.angleLabel) {
+            const exerciseType = this.selectedExercises[this.currentExerciseIndex];
+            switch (exerciseType) {
+                case 'pushup':
+                    this.angleLabel.textContent = 'Arm Angle:';
+                    break;
+                case 'squat':
+                    this.angleLabel.textContent = 'Knee Angle:';
+                    break;
+                case 'situp':
+                    this.angleLabel.textContent = 'Torso Angle:';
+                    break;
+                default:
+                    this.angleLabel.textContent = 'Angle:';
+            }
+        }
     }
     
     updateCurrentRepDisplay() {
@@ -398,8 +417,14 @@ class StrongWorkoutTracker {
     
     toggleVideo() {
         this.isVideoVisible = !this.isVideoVisible;
-        this.videoSection.style.display = this.isVideoVisible ? 'block' : 'none';
-        this.toggleVideoBtn.textContent = this.isVideoVisible ? 'Hide Camera' : 'Show Camera';
+        
+        if (this.isVideoVisible) {
+            this.videoSection.classList.remove('hidden');
+            this.toggleVideoBtn.textContent = 'Hide Camera';
+        } else {
+            this.videoSection.classList.add('hidden');
+            this.toggleVideoBtn.textContent = 'Show Camera';
+        }
     }
     
     toggleDebug() {
@@ -808,15 +833,53 @@ class StrongWorkoutTracker {
     }
     
     analyzeSquat(landmarks) {
+        const requiredLandmarks = [23, 24, 25, 26]; // hips and knees
+        const optionalLandmarks = [27, 28]; // ankles
+        
         const leftHip = landmarks[23];
         const rightHip = landmarks[24];
         const leftKnee = landmarks[25];
         const rightKnee = landmarks[26];
+        const leftAnkle = landmarks[27];
+        const rightAnkle = landmarks[28];
+        
+        // Count visible landmarks for feedback
+        let visibleRequired = 0;
+        let visibleOptional = 0;
+        
+        requiredLandmarks.forEach(idx => {
+            if (landmarks[idx] && landmarks[idx].visibility > 0.5) visibleRequired++;
+        });
+        
+        optionalLandmarks.forEach(idx => {
+            if (landmarks[idx] && landmarks[idx].visibility > 0.5) visibleOptional++;
+        });
+        
+        const totalVisible = visibleRequired + visibleOptional;
+        const totalLandmarks = requiredLandmarks.length + optionalLandmarks.length;
+        
+        // Generate guidance based on detection quality
+        let guidance = 'Position yourself for squats';
+        if (visibleRequired < 4) {
+            guidance = 'Make sure your hips and knees are visible to the camera';
+        } else if (visibleOptional < 2) {
+            guidance = 'Try to keep your ankles visible for better detection';
+        } else if (this.isTracking) {
+            guidance = 'Great! Perform squats with proper depth';
+        }
         
         if (!leftHip || !rightHip || !leftKnee || !rightKnee ||
             leftHip.visibility < 0.5 || rightHip.visibility < 0.5 ||
             leftKnee.visibility < 0.5 || rightKnee.visibility < 0.5) {
-            this.updateDebug('Missing landmarks for squat detection');
+            
+            this.updateFormFeedback({
+                angle: null,
+                position: null,
+                state: 'ready',
+                landmarksDetected: totalVisible,
+                totalLandmarks: totalLandmarks,
+                guidance: guidance
+            });
             return;
         }
         
@@ -824,30 +887,105 @@ class StrongWorkoutTracker {
         const kneeY = (leftKnee.y + rightKnee.y) / 2;
         const diff = kneeY - hipY;
         
-        this.updateDebug(`Squat: diff=${diff.toFixed(3)}, state=${this.exerciseState}, reps=${this.currentRepCount}`);
+        // Calculate knee angle if ankles are visible
+        let leftKneeAngle = null, rightKneeAngle = null;
+        if (leftAnkle && leftAnkle.visibility > 0.5) {
+            leftKneeAngle = this.calculateAngle(leftHip, leftKnee, leftAnkle);
+        }
+        if (rightAnkle && rightAnkle.visibility > 0.5) {
+            rightKneeAngle = this.calculateAngle(rightHip, rightKnee, rightAnkle);
+        }
+        
+        const avgKneeAngle = leftKneeAngle && rightKneeAngle ? (leftKneeAngle + rightKneeAngle) / 2 : null;
+        
+        // Enhanced guidance based on current position
+        if (this.isTracking) {
+            if (diff < -0.05) {
+                guidance = 'Very deep squat - push up to complete the rep!';
+            } else if (diff < 0.03) {
+                guidance = 'Good squat depth - now stand up!';
+            } else if (diff > 0.08) {
+                guidance = 'Standing position - lower down for next rep';
+            } else {
+                guidance = 'Mid-range - continue the movement';
+            }
+        }
+        
+        // Update form feedback
+        this.updateFormFeedback({
+            angle: avgKneeAngle,
+            position: diff,
+            state: this.exerciseState,
+            landmarksDetected: totalVisible,
+            totalLandmarks: totalLandmarks,
+            guidance: guidance
+        });
+        
+        this.updateDebug(`Squat: diff=${diff.toFixed(3)}, kneeAngle=${avgKneeAngle ? avgKneeAngle.toFixed(1) + '°' : 'N/A'}, state=${this.exerciseState}, reps=${this.currentRepCount}`);
         
         const now = Date.now();
         if (this.exerciseState === 'up' && diff < 0.03 && (now - this.lastStateChange) > 500) {
             this.exerciseState = 'down';
             this.lastStateChange = now;
+            console.log('Squat: Going DOWN, diff:', diff);
         } else if (this.exerciseState === 'down' && diff > 0.06 && (now - this.lastStateChange) > 500) {
             this.exerciseState = 'up';
             this.lastStateChange = now;
             this.currentRepCount++;
             this.updateCurrentRepDisplay();
+            console.log('Squat: Going UP, rep counted:', this.currentRepCount);
         }
     }
     
     analyzeSitup(landmarks) {
+        const requiredLandmarks = [11, 12, 23, 24]; // shoulders and hips
+        const optionalLandmarks = [0, 25, 26]; // nose and knees
+        
         const leftShoulder = landmarks[11];
         const rightShoulder = landmarks[12];
         const leftHip = landmarks[23];
         const rightHip = landmarks[24];
+        const nose = landmarks[0];
+        const leftKnee = landmarks[25];
+        const rightKnee = landmarks[26];
+        
+        // Count visible landmarks for feedback
+        let visibleRequired = 0;
+        let visibleOptional = 0;
+        
+        requiredLandmarks.forEach(idx => {
+            if (landmarks[idx] && landmarks[idx].visibility > 0.5) visibleRequired++;
+        });
+        
+        optionalLandmarks.forEach(idx => {
+            if (landmarks[idx] && landmarks[idx].visibility > 0.5) visibleOptional++;
+        });
+        
+        const totalVisible = visibleRequired + visibleOptional;
+        const totalLandmarks = requiredLandmarks.length + optionalLandmarks.length;
+        
+        // Generate guidance based on detection quality
+        let guidance = 'Position yourself for sit-ups';
+        if (visibleRequired < 4) {
+            guidance = 'Make sure your shoulders and hips are visible to the camera';
+        } else if (visibleOptional < 2) {
+            guidance = 'Try to keep your head and knees visible for better detection';
+        } else if (this.isTracking) {
+            guidance = 'Great! Perform sit-ups with controlled movement';
+        }
         
         if (!leftShoulder || !rightShoulder || !leftHip || !rightHip ||
             leftShoulder.visibility < 0.5 || rightShoulder.visibility < 0.5 ||
             leftHip.visibility < 0.5 || rightHip.visibility < 0.5) {
-            this.updateDebug('Missing landmarks for sit-up detection');
+            
+            this.updateFormFeedback({
+                angle: null,
+                position: null,
+                state: 'ready',
+                landmarksDetected: totalVisible,
+                totalLandmarks: totalLandmarks,
+                guidance: guidance
+            });
             return;
         }
         
@@ -855,17 +993,65 @@ class StrongWorkoutTracker {
         const hipY = (leftHip.y + rightHip.y) / 2;
         const diff = shoulderY - hipY;
         
-        this.updateDebug(`Sit-up: diff=${diff.toFixed(3)}, state=${this.exerciseState}, reps=${this.currentRepCount}`);
+        // Calculate torso angle if nose is visible
+        let torsoAngle = null;
+        if (nose && nose.visibility > 0.5) {
+            const midHip = {
+                x: (leftHip.x + rightHip.x) / 2,
+                y: (leftHip.y + rightHip.y) / 2
+            };
+            const midShoulder = {
+                x: (leftShoulder.x + rightShoulder.x) / 2,
+                y: (leftShoulder.y + rightShoulder.y) / 2
+            };
+            
+            // Calculate angle between torso and vertical
+            const torsoVector = { x: midShoulder.x - midHip.x, y: midShoulder.y - midHip.y };
+            const verticalVector = { x: 0, y: -1 };
+            
+            const dotProduct = torsoVector.x * verticalVector.x + torsoVector.y * verticalVector.y;
+            const magnitude1 = Math.sqrt(torsoVector.x * torsoVector.x + torsoVector.y * torsoVector.y);
+            const magnitude2 = 1; // vertical vector magnitude
+            
+            torsoAngle = Math.acos(dotProduct / (magnitude1 * magnitude2)) * (180 / Math.PI);
+        }
+        
+        // Enhanced guidance based on current position
+        if (this.isTracking) {
+            if (diff < -0.15) {
+                guidance = 'Lying down - crunch up to complete the rep!';
+            } else if (diff < -0.05) {
+                guidance = 'Good sit-up position - now lower down!';
+            } else if (diff > 0) {
+                guidance = 'Sitting up - lower back down for next rep';
+            } else {
+                guidance = 'Mid-range - continue the movement';
+            }
+        }
+        
+        // Update form feedback
+        this.updateFormFeedback({
+            angle: torsoAngle,
+            position: diff,
+            state: this.exerciseState,
+            landmarksDetected: totalVisible,
+            totalLandmarks: totalLandmarks,
+            guidance: guidance
+        });
+        
+        this.updateDebug(`Sit-up: diff=${diff.toFixed(3)}, torsoAngle=${torsoAngle ? torsoAngle.toFixed(1) + '°' : 'N/A'}, state=${this.exerciseState}, reps=${this.currentRepCount}`);
         
         const now = Date.now();
         if (this.exerciseState === 'down' && diff < -0.1 && (now - this.lastStateChange) > 500) {
             this.exerciseState = 'up';
             this.lastStateChange = now;
+            console.log('Sit-up: Going UP, diff:', diff);
         } else if (this.exerciseState === 'up' && diff > -0.05 && (now - this.lastStateChange) > 500) {
             this.exerciseState = 'down';
             this.lastStateChange = now;
             this.currentRepCount++;
             this.updateCurrentRepDisplay();
+            console.log('Sit-up: Going DOWN, rep counted:', this.currentRepCount);
         }
     }
 }
