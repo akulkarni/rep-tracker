@@ -74,6 +74,16 @@ class StrongWorkoutTracker {
         this.debugInfo = document.getElementById('debugInfo');
         this.debugContent = document.querySelector('.debug-content');
         
+        // Form Feedback
+        this.formFeedback = document.getElementById('formFeedback');
+        this.exerciseTitle = document.getElementById('exerciseTitle');
+        this.statusDot = document.getElementById('statusDot');
+        this.statusText = document.getElementById('statusText');
+        this.armAngleDisplay = document.getElementById('armAngle');
+        this.positionValueDisplay = document.getElementById('positionValue');
+        this.exerciseStateDisplay = document.getElementById('exerciseStateDisplay');
+        this.formGuidance = document.getElementById('formGuidance');
+        
         // Summary
         this.totalDurationDisplay = document.getElementById('totalDuration');
         this.totalSetsDisplay = document.getElementById('totalSets');
@@ -318,6 +328,11 @@ class StrongWorkoutTracker {
         this.currentSetNumber.textContent = this.currentSetNumber;
         this.updateCurrentRepDisplay();
         this.updateNextExercises();
+        
+        // Update form feedback overlay
+        if (this.exerciseTitle) {
+            this.exerciseTitle.textContent = currentExercise.name;
+        }
     }
     
     updateCurrentRepDisplay() {
@@ -394,6 +409,65 @@ class StrongWorkoutTracker {
     updateDebug(message) {
         if (this.debugInfo) {
             this.debugInfo.textContent = message;
+        }
+    }
+    
+    updateFormFeedback(data) {
+        if (!this.formFeedback) return;
+        
+        const {
+            angle = null,
+            position = null,
+            state = 'ready',
+            landmarksDetected = 0,
+            totalLandmarks = 0,
+            guidance = 'Position yourself for the exercise'
+        } = data;
+        
+        // Update metrics
+        if (this.armAngleDisplay) {
+            this.armAngleDisplay.textContent = angle !== null ? `${angle.toFixed(1)}°` : '--°';
+        }
+        
+        if (this.positionValueDisplay) {
+            this.positionValueDisplay.textContent = position !== null ? position.toFixed(3) : '--';
+        }
+        
+        if (this.exerciseStateDisplay) {
+            this.exerciseStateDisplay.textContent = state.charAt(0).toUpperCase() + state.slice(1);
+        }
+        
+        // Update detection status
+        const detectionQuality = totalLandmarks > 0 ? landmarksDetected / totalLandmarks : 0;
+        
+        if (this.statusDot && this.statusText) {
+            this.statusDot.className = 'status-dot';
+            
+            if (detectionQuality >= 0.8) {
+                this.statusDot.classList.add('detecting');
+                this.statusText.textContent = 'Good Detection';
+            } else if (detectionQuality >= 0.5) {
+                this.statusDot.classList.add('partial');
+                this.statusText.textContent = 'Partial Detection';
+            } else {
+                this.statusText.textContent = 'Position Yourself';
+            }
+        }
+        
+        // Update guidance
+        if (this.formGuidance) {
+            const guidanceElement = this.formGuidance.querySelector('p');
+            if (guidanceElement) {
+                guidanceElement.textContent = guidance;
+            }
+            
+            // Update guidance styling based on detection quality
+            this.formGuidance.className = 'form-guidance';
+            if (detectionQuality >= 0.8) {
+                this.formGuidance.classList.add('success');
+            } else if (detectionQuality >= 0.5) {
+                this.formGuidance.classList.add('warning');
+            }
         }
     }
     
@@ -597,17 +671,53 @@ class StrongWorkoutTracker {
     }
     
     analyzePushup(landmarks) {
+        const requiredLandmarks = [11, 12, 13, 14]; // shoulders and elbows
+        const optionalLandmarks = [15, 16]; // wrists
+        
         const leftShoulder = landmarks[11];
         const rightShoulder = landmarks[12];
-        const leftWrist = landmarks[15];
-        const rightWrist = landmarks[16];
         const leftElbow = landmarks[13];
         const rightElbow = landmarks[14];
+        const leftWrist = landmarks[15];
+        const rightWrist = landmarks[16];
+        
+        // Count visible landmarks for feedback
+        let visibleRequired = 0;
+        let visibleOptional = 0;
+        
+        requiredLandmarks.forEach(idx => {
+            if (landmarks[idx] && landmarks[idx].visibility > 0.5) visibleRequired++;
+        });
+        
+        optionalLandmarks.forEach(idx => {
+            if (landmarks[idx] && landmarks[idx].visibility > 0.5) visibleOptional++;
+        });
+        
+        const totalVisible = visibleRequired + visibleOptional;
+        const totalLandmarks = requiredLandmarks.length + optionalLandmarks.length;
+        
+        // Generate guidance based on detection quality
+        let guidance = 'Position yourself for push-ups';
+        if (visibleRequired < 4) {
+            guidance = 'Make sure your shoulders and elbows are visible to the camera';
+        } else if (visibleOptional < 2) {
+            guidance = 'Try to keep your wrists visible for better detection';
+        } else if (this.isTracking) {
+            guidance = 'Great! Perform push-ups with full range of motion';
+        }
         
         if (!leftShoulder || !rightShoulder || !leftElbow || !rightElbow ||
             leftShoulder.visibility < 0.5 || rightShoulder.visibility < 0.5 ||
             leftElbow.visibility < 0.5 || rightElbow.visibility < 0.5) {
-            this.updateDebug('Missing landmarks for push-up detection');
+            
+            this.updateFormFeedback({
+                angle: null,
+                position: null,
+                state: 'ready',
+                landmarksDetected: totalVisible,
+                totalLandmarks: totalLandmarks,
+                guidance: guidance
+            });
             return;
         }
         
@@ -627,6 +737,33 @@ class StrongWorkoutTracker {
         const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
         const elbowY = (leftElbow.y + rightElbow.y) / 2;
         const positionDiff = elbowY - shoulderY;
+        
+        // Enhanced guidance based on current position
+        if (this.isTracking) {
+            if (avgAngle < 180) {
+                if (avgAngle < 90) {
+                    guidance = 'Arms very bent - push up to complete the rep!';
+                } else if (avgAngle < 110) {
+                    guidance = 'Good down position - now push up!';
+                } else if (avgAngle > 140) {
+                    guidance = 'Good up position - lower down for next rep';
+                } else {
+                    guidance = 'Mid-range - continue the movement';
+                }
+            } else {
+                guidance = 'Keep your arms in view for angle detection';
+            }
+        }
+        
+        // Update form feedback
+        this.updateFormFeedback({
+            angle: avgAngle < 180 ? avgAngle : null,
+            position: positionDiff,
+            state: this.exerciseState,
+            landmarksDetected: totalVisible,
+            totalLandmarks: totalLandmarks,
+            guidance: guidance
+        });
         
         this.updateDebug(`Push-up: angle=${avgAngle.toFixed(1)}°, posDiff=${positionDiff.toFixed(3)}, state=${this.exerciseState}, reps=${this.currentRepCount}`);
         

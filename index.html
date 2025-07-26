@@ -24,6 +24,35 @@
             <div class="video-container">
                 <video id="videoElement" autoplay muted playsinline></video>
                 <canvas id="poseCanvas"></canvas>
+                <!-- Real-time Form Feedback Overlay -->
+                <div class="form-feedback-overlay" id="formFeedback">
+                    <div class="feedback-header">
+                        <h3 id="exerciseTitle">Push-ups</h3>
+                        <div class="detection-status" id="detectionStatus">
+                            <span class="status-dot" id="statusDot"></span>
+                            <span id="statusText">Position yourself</span>
+                        </div>
+                    </div>
+                    <div class="feedback-content">
+                        <div class="form-metrics">
+                            <div class="metric">
+                                <span class="metric-label">Arm Angle:</span>
+                                <span class="metric-value" id="armAngle">--°</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Position:</span>
+                                <span class="metric-value" id="positionValue">--</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">State:</span>
+                                <span class="metric-value" id="exerciseStateDisplay">Ready</span>
+                            </div>
+                        </div>
+                        <div class="form-guidance" id="formGuidance">
+                            <p>Get in pushup position and make sure your upper body is visible</p>
+                        </div>
+                    </div>
+                </div>
             </div>
             <button id="toggleVideoBtn" class="toggle-video-btn">Hide Camera</button>
         </div>
