@@ -160,6 +160,7 @@ class StrongWorkoutTracker {
         try {
             await this.initializeCamera();
             await this.initializePoseDetection();
+            this.updateStatus('Camera ready! Click "Start Set" to begin tracking.');
         } catch (error) {
             console.error('Error initializing camera:', error);
             this.updateStatus('Camera initialization failed. You can still use manual counting.');
@@ -167,7 +168,6 @@ class StrongWorkoutTracker {
         
         this.updateWorkoutDisplay();
         this.startWorkoutTimer();
-        this.updateStatus('Workout started! Select an exercise to begin your first set.');
     }
     
     startSet() {
@@ -436,25 +436,40 @@ class StrongWorkoutTracker {
     
     // Camera and Pose Detection Methods (from original code)
     async initializeCamera() {
-        const constraints = {
-            video: {
-                width: { ideal: 640 },
-                height: { ideal: 480 },
-                facingMode: 'user'
-            }
-        };
-        
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        this.video.srcObject = stream;
-        
-        return new Promise((resolve) => {
-            this.video.onloadedmetadata = () => {
-                this.video.play();
-                this.canvas.width = this.video.videoWidth;
-                this.canvas.height = this.video.videoHeight;
-                resolve();
+        try {
+            const constraints = {
+                video: {
+                    width: { ideal: 640 },
+                    height: { ideal: 480 },
+                    facingMode: 'user'
+                }
             };
-        });
+            
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            this.video.srcObject = stream;
+            
+            return new Promise((resolve, reject) => {
+                this.video.onloadedmetadata = () => {
+                    this.video.play().then(() => {
+                        // Wait a moment for video to fully load
+                        setTimeout(() => {
+                            this.canvas.width = this.video.videoWidth;
+                            this.canvas.height = this.video.videoHeight;
+                            console.log('Camera initialized:', this.video.videoWidth, 'x', this.video.videoHeight);
+                            resolve();
+                        }, 500);
+                    }).catch(reject);
+                };
+                
+                this.video.onerror = (error) => {
+                    console.error('Video error:', error);
+                    reject(error);
+                };
+            });
+        } catch (error) {
+            console.error('Camera initialization error:', error);
+            throw error;
+        }
     }
     
     async initializePoseDetection() {
@@ -479,39 +494,56 @@ class StrongWorkoutTracker {
         
         this.pose.onResults((results) => this.onPoseResults(results));
         
+        // Start pose detection loop immediately
+        console.log('Starting pose detection...');
         this.detectPose();
     }
     
     async detectPose() {
-        if (this.isTracking && this.video.readyState >= 2) {
-            await this.pose.send({ image: this.video });
+        if (this.pose && this.video && this.video.readyState >= 2) {
+            try {
+                await this.pose.send({ image: this.video });
+            } catch (error) {
+                console.error('Pose detection error:', error);
+            }
         }
         requestAnimationFrame(() => this.detectPose());
     }
     
     onPoseResults(results) {
+        if (!this.ctx || !this.canvas) return;
+        
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        if (results.poseLandmarks && this.isTracking) {
+        if (results.poseLandmarks) {
             this.drawPose(results.poseLandmarks);
-            this.analyzeExercise(results.poseLandmarks);
+            
+            // Only analyze exercise if we're actively tracking
+            if (this.isTracking && this.workoutState === 'active') {
+                this.analyzeExercise(results.poseLandmarks);
+            }
         }
     }
     
     drawPose(landmarks) {
+        if (!this.ctx || !landmarks || landmarks.length === 0) return;
+        
         this.ctx.strokeStyle = '#00FF00';
         this.ctx.lineWidth = 2;
         this.ctx.fillStyle = '#FF0000';
         
         // Draw key points
         const keyPoints = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+        let visiblePoints = 0;
+        
         keyPoints.forEach(index => {
-            if (landmarks[index]) {
+            if (landmarks[index] && landmarks[index].visibility > 0.5) {
                 const x = landmarks[index].x * this.canvas.width;
                 const y = landmarks[index].y * this.canvas.height;
                 this.ctx.beginPath();
                 this.ctx.arc(x, y, 5, 0, 2 * Math.PI);
                 this.ctx.fill();
+                visiblePoints++;
             }
         });
         
@@ -523,7 +555,8 @@ class StrongWorkoutTracker {
         ];
         
         connections.forEach(([start, end]) => {
-            if (landmarks[start] && landmarks[end]) {
+            if (landmarks[start] && landmarks[end] && 
+                landmarks[start].visibility > 0.5 && landmarks[end].visibility > 0.5) {
                 this.ctx.beginPath();
                 this.ctx.moveTo(
                     landmarks[start].x * this.canvas.width,
@@ -536,9 +569,18 @@ class StrongWorkoutTracker {
                 this.ctx.stroke();
             }
         });
+        
+        // Update debug info with pose quality
+        if (!this.isTracking) {
+            this.updateDebug(`Pose detected: ${visiblePoints} visible points`);
+        }
     }
     
     analyzeExercise(landmarks) {
+        if (!this.selectedExercises || this.currentExerciseIndex >= this.selectedExercises.length) {
+            return;
+        }
+        
         const currentExerciseType = this.selectedExercises[this.currentExerciseIndex];
         
         switch (currentExerciseType) {
@@ -560,7 +602,9 @@ class StrongWorkoutTracker {
         const leftWrist = landmarks[15];
         const rightWrist = landmarks[16];
         
-        if (!leftShoulder || !rightShoulder || !leftWrist || !rightWrist) {
+        if (!leftShoulder || !rightShoulder || !leftWrist || !rightWrist ||
+            leftShoulder.visibility < 0.5 || rightShoulder.visibility < 0.5 ||
+            leftWrist.visibility < 0.5 || rightWrist.visibility < 0.5) {
             this.updateDebug('Missing landmarks for push-up detection');
             return;
         }
@@ -589,7 +633,9 @@ class StrongWorkoutTracker {
         const leftKnee = landmarks[25];
         const rightKnee = landmarks[26];
         
-        if (!leftHip || !rightHip || !leftKnee || !rightKnee) {
+        if (!leftHip || !rightHip || !leftKnee || !rightKnee ||
+            leftHip.visibility < 0.5 || rightHip.visibility < 0.5 ||
+            leftKnee.visibility < 0.5 || rightKnee.visibility < 0.5) {
             this.updateDebug('Missing landmarks for squat detection');
             return;
         }
@@ -618,7 +664,9 @@ class StrongWorkoutTracker {
         const leftHip = landmarks[23];
         const rightHip = landmarks[24];
         
-        if (!leftShoulder || !rightShoulder || !leftHip || !rightHip) {
+        if (!leftShoulder || !rightShoulder || !leftHip || !rightHip ||
+            leftShoulder.visibility < 0.5 || rightShoulder.visibility < 0.5 ||
+            leftHip.visibility < 0.5 || rightHip.visibility < 0.5) {
             this.updateDebug('Missing landmarks for sit-up detection');
             return;
         }
